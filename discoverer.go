@@ -11,8 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-
-	multierror "github.com/streimelstefan/tyro/errors"
 )
 
 var (
@@ -28,6 +26,14 @@ type DicomFile struct {
 	Path string
 	// Handle is the open file handle for the DICOM file.
 	Handle *os.File
+}
+
+// DiscoveryResult contains the channels for discovered DICOM files and errors.
+type DiscoveryResult struct {
+	// Files is a channel that will receive discovered DicomFile objects.
+	Files <-chan DicomFile
+	// Errors is a channel that will receive errors encountered during discovery.
+	Errors <-chan error
 }
 
 // isValidDICOM checks if the file at the given path is a valid DICOM file.
@@ -65,15 +71,15 @@ func isValidDICOM(path string) (bool, *os.File, error) {
 	return true, file, nil
 }
 
-// DiscoverDICOMFiles scans the given directory and returns a slice of DicomFile
-// representing all valid DICOM files found recursively within the directory tree.
+// DiscoverDICOMFiles scans the given directory and returns channels for discovered DICOM files and errors.
+// This function allows for streaming processing of discovered files without waiting for all files to be found.
 //
 // dir specifies the root directory to search for DICOM files.
 // maxConcurrency sets the maximum number of concurrent goroutines allowed (if 0, defaults to 8).
 //
-// Returns a slice of discovered DicomFile and any error encountered during traversal.
-// Errors related to file size or magic number are ignored; all other errors are collected and returned as a multierror.
-func DiscoverDICOMFiles(dir string, maxConcurrency int) ([]DicomFile, error) {
+// Returns a DiscoveryResult containing channels for discovered files and errors.
+// The caller is responsible for reading from both channels until they are closed.
+func DiscoverDICOMFiles(dir string, maxConcurrency int) DiscoveryResult {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 8
 	}
@@ -98,28 +104,13 @@ func DiscoverDICOMFiles(dir string, maxConcurrency int) ([]DicomFile, error) {
 	// Close resultCh and errCh when all workers are done.
 	go func() {
 		wg.Wait()
-		close(errCh) // we need to close this first in order to not loose a possible last error
+		close(errCh)
 		close(resultCh)
 	}()
 
-	// Collect results and aggregate errors.
-	dicomFiles := make([]DicomFile, 0)
-	multiErr := multierror.New()
-	for {
-		select {
-		case err := <-errCh:
-			if err != ErrorFileTooSmallToBeDICOM && err != ErrorInvalidMagicNumber {
-				multiErr.Add(err)
-			}
-		case file, ok := <-resultCh:
-			if !ok {
-				if multiErr.HasErrors() {
-					return dicomFiles, multiErr
-				}
-				return dicomFiles, nil
-			}
-			dicomFiles = append(dicomFiles, file)
-		}
+	return DiscoveryResult{
+		Files:  resultCh,
+		Errors: errCh,
 	}
 }
 

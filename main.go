@@ -1,10 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
-
-	"github.com/suyashkumar/dicom"
 )
 
 func main() {
@@ -16,19 +15,60 @@ func main() {
 
 	dir := os.Args[1]
 
-	// get all files in the directory
-	dicomFiles, err := DiscoverDICOMFiles(dir, 8)
-	if err != nil {
-		fmt.Printf("%v\n", err)
-	}
+	// Use buffered output for better performance
+	writer := bufio.NewWriter(os.Stdout)
+	defer writer.Flush()
 
-	for _, file := range dicomFiles {
-		dataset, err := dicom.ParseUntilEOF(file.Handle, nil, dicom.ParseOption(dicom.SkipPixelData()))
-		if err != nil {
-			fmt.Println("Error parsing DICOM file:", err)
-			continue
+	// Discover DICOM files asynchronously
+	discoveryResult := DiscoverDICOMFiles(dir, 16) // Increased concurrency
+
+	// Parse discovered DICOM files asynchronously
+	parsingResult := ParseDICOMFiles(discoveryResult.Files, 16) // Increased concurrency
+
+	// Process results from both channels
+	parsedCount := 0
+	errorCount := 0
+
+	// Use a select to read from both channels until they're closed
+	filesClosed := false
+	discoveryErrorsClosed := false
+	parsingErrorsClosed := false
+
+	// multiErr := multierror.New()
+
+	for !filesClosed || !discoveryErrorsClosed || !parsingErrorsClosed {
+		select {
+		case parsedFile, ok := <-parsingResult.Files:
+			if !ok {
+				filesClosed = true
+				continue
+			}
+			parsedCount++
+
+			// Use buffered output for better performance
+			fmt.Fprintf(writer, "Parsed %s: %d elements\n", parsedFile.Path, len(parsedFile.Dataset.Elements))
+
+			// Close the file handle immediately after processing
+			parsedFile.Close()
+
+		case _, ok := <-parsingResult.Errors:
+			if !ok {
+				parsingErrorsClosed = true
+				continue
+			}
+			errorCount++
+			// multiErr.Add(err)
+
+		case _, ok := <-discoveryResult.Errors:
+			if !ok {
+				discoveryErrorsClosed = true
+				continue
+			}
+			errorCount++
+			// multiErr.Add(err)
 		}
-		fmt.Printf("Found %d elements in %s\n", len(dataset.Elements), file.Path)
 	}
 
+	writer.Flush()
+	fmt.Printf("\nProcessing complete. Parsed %d files with %d errors.\n", parsedCount, errorCount)
 }
