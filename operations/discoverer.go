@@ -3,7 +3,7 @@
 // This package includes functions to identify valid DICOM files and recursively search directories
 // with configurable concurrency. It is designed for efficient and robust DICOM file discovery in large
 // file systems, handling errors gracefully and supporting concurrent processing.
-package main
+package operations
 
 import (
 	"errors"

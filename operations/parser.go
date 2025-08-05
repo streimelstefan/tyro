@@ -4,7 +4,7 @@
 // designed to work with the channel-based discovery system for efficient streaming processing.
 // The parser automatically handles file handle cleanup, closing handles on both successful
 // parsing and errors to prevent resource leaks.
-package main
+package operations
 
 import (
 	"fmt"
